@@ -106,6 +106,9 @@ impl SpeedReader {
         total
     }
 
+    fn format_remaining(&self) -> String {
+        format!("{}%", (self.current_word_index / self.words.len()) as i32)
+    }
     fn format_duration(duration: Duration) -> String {
         let total_seconds = duration.as_secs();
         let minutes = total_seconds / 60;
@@ -203,19 +206,17 @@ impl SpeedReader {
 
         let status_row = row - 1;
         let reading_time = self.get_reading_time();
+
         let status_text = format!(
-            "{} | Word {}/{} | WPM: {} | Time: {} | Started: {}{}",
+            "{} | Word {}/{} | WPM: {} | Percent: {:.0}% | Remaining: {}",
             if self.is_paused { "PAUSED" } else { "PLAYING" },
             self.current_word_index + 1,
             self.words.len(),
             self.wpm,
-            Self::format_duration(reading_time),
-            self.format_start_time(),
-            if self.is_paused {
-                " - Press Space to start"
-            } else {
-                ""
-            },
+            ((self.current_word_index as f64 + 1.0) / self.words.len() as f64) * 100.0,
+            Self::format_duration(Duration::from_secs_f64(
+                (self.words.len() - self.current_word_index) as f64 / (self.wpm / 60) as f64
+            ))
         );
 
         let status_col = width / 2 - (status_text.len() as u16 / 2);
