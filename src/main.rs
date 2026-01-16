@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long, default_value_t = 300)]
+    #[arg(short, long, default_value_t = 500)]
     wpm: u32,
 
     #[arg(short, long)]
@@ -77,7 +77,7 @@ impl SpeedReader {
 
     fn adjust_wpm(&mut self, delta: i32) {
         let new_wpm = self.wpm as i32 + delta;
-        if new_wpm >= 50 && new_wpm <= 1000 {
+        if new_wpm >= 50 && new_wpm <= 5000 {
             self.wpm = new_wpm as u32;
         }
     }
@@ -137,11 +137,6 @@ impl SpeedReader {
         let word = self.current_word().unwrap_or("");
         let word_len = word.len();
 
-        // let pivot_index = if word_len <= 4 {
-        //     word_len / 2
-        // } else {
-        //     word_len / 3 + 1
-        // };
         let pivot_index = word_len / 2;
 
         let row = height / 2;
@@ -243,11 +238,13 @@ impl SpeedReader {
         self.render()?;
 
         let mut last_update = Instant::now();
+        // Cache this value
+        let mut display_interval = self.get_display_interval();
 
         loop {
             if !self.is_paused {
                 let now = Instant::now();
-                if now.duration_since(last_update) >= self.get_display_interval() {
+                if now.duration_since(last_update) >= display_interval {
                     self.render()?;
                     self.next_word();
                     last_update = now;
@@ -295,10 +292,12 @@ impl SpeedReader {
                         }
                         KeyCode::Char('+') | KeyCode::Char('=') => {
                             self.adjust_wpm(50);
+                            display_interval = self.get_display_interval();
                             self.render()?;
                         }
                         KeyCode::Char('-') => {
                             self.adjust_wpm(-50);
+                            display_interval = self.get_display_interval();
                             self.render()?;
                         }
                         KeyCode::Char('o') => {
