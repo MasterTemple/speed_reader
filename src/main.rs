@@ -137,11 +137,12 @@ impl SpeedReader {
         let word = self.current_word().unwrap_or("");
         let word_len = word.len();
 
-        let pivot_index = if word_len <= 4 {
-            word_len / 2
-        } else {
-            word_len / 3 + 1
-        };
+        // let pivot_index = if word_len <= 4 {
+        //     word_len / 2
+        // } else {
+        //     word_len / 3 + 1
+        // };
+        let pivot_index = word_len / 2;
 
         let row = height / 2;
         let col = width / 2 - (word_len as u16 / 2);
@@ -278,7 +279,7 @@ impl SpeedReader {
                             self.restart();
                             self.render()?;
                         }
-                        KeyCode::Right | KeyCode::Down => {
+                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Down => {
                             if self.next_word() {
                                 self.render()?;
                                 last_update = Instant::now();
@@ -286,7 +287,7 @@ impl SpeedReader {
                                 break;
                             }
                         }
-                        KeyCode::Left | KeyCode::Up => {
+                        KeyCode::Char('h') | KeyCode::Left | KeyCode::Up => {
                             if self.previous_word() {
                                 self.render()?;
                                 last_update = Instant::now();
