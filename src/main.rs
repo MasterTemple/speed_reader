@@ -215,7 +215,7 @@ impl SpeedReader {
             self.wpm,
             ((self.current_word_index as f64 + 1.0) / self.words.len() as f64) * 100.0,
             Self::format_duration(Duration::from_secs_f64(
-                (self.words.len() - self.current_word_index) as f64 / (self.wpm / 60) as f64
+                (self.words.len() - self.current_word_index) as f64 / (self.wpm as f64 / 60.0)
             ))
         );
 
