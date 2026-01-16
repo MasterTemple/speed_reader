@@ -2,14 +2,15 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode},
     execute,
     style::{Color, Print, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ignore::WalkBuilder;
 use std::io::{self, Read, Write};
 use std::process;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -29,6 +30,8 @@ struct SpeedReader {
     current_word_index: usize,
     wpm: u32,
     is_paused: bool,
+    start_time: Option<Instant>,
+    total_reading_time: Duration,
 }
 
 impl SpeedReader {
@@ -37,7 +40,9 @@ impl SpeedReader {
             words,
             current_word_index: 0,
             wpm,
-            is_paused: false,
+            is_paused: true,
+            start_time: None,
+            total_reading_time: Duration::ZERO,
         }
     }
 
@@ -65,33 +70,66 @@ impl SpeedReader {
 
     fn restart(&mut self) {
         self.current_word_index = 0;
+        self.is_paused = true;
+        self.start_time = None;
+        self.total_reading_time = Duration::ZERO;
+    }
+
+    fn adjust_wpm(&mut self, delta: i32) {
+        let new_wpm = self.wpm as i32 + delta;
+        if new_wpm >= 50 && new_wpm <= 1000 {
+            self.wpm = new_wpm as u32;
+        }
     }
 
     fn get_display_interval(&self) -> Duration {
         Duration::from_secs_f64(60.0 / self.wpm as f64)
     }
 
-    fn format_word(&self, word: &str) -> String {
-        if word.is_empty() {
-            return word.to_string();
+    fn start_reading(&mut self) {
+        self.is_paused = false;
+        self.start_time = Some(Instant::now());
+    }
+
+    fn pause_reading(&mut self) {
+        self.is_paused = true;
+        if let Some(start) = self.start_time.take() {
+            self.total_reading_time += start.elapsed();
         }
+    }
 
-        let word_len = word.len();
-        let pivot_index = if word_len <= 4 {
-            word_len / 2
-        } else {
-            word_len / 3 + 1
-        };
+    fn get_reading_time(&self) -> Duration {
+        let mut total = self.total_reading_time;
+        if let Some(start) = self.start_time {
+            total += start.elapsed();
+        }
+        total
+    }
 
-        let mut result = String::new();
-        for (i, c) in word.chars().enumerate() {
-            if i == pivot_index {
-                result.push(c);
-            } else {
-                result.push(c);
+    fn format_duration(duration: Duration) -> String {
+        let total_seconds = duration.as_secs();
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        let millis = duration.subsec_millis();
+        format!("{:02}:{:02}.{:03}", minutes, seconds, millis)
+    }
+
+    fn format_start_time(&self) -> String {
+        if let Some(start) = self.start_time {
+            let elapsed = start.elapsed();
+            let now = SystemTime::now()
+                .checked_sub(elapsed)
+                .unwrap_or(SystemTime::now());
+
+            if let Ok(duration) = now.duration_since(SystemTime::UNIX_EPOCH) {
+                let secs = duration.as_secs();
+                let hours = (secs % 86400) / 3600;
+                let minutes = (secs % 3600) / 60;
+                let seconds = secs % 60;
+                return format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
             }
         }
-        result
+        "Not started".to_string()
     }
 
     fn render(&self) -> Result<()> {
@@ -132,14 +170,21 @@ impl SpeedReader {
     fn render_controls(&self, width: u16, height: u16) -> Result<()> {
         let controls = [
             ("[Space]", "Play/Pause"),
-            ("[↑/←]", "Previous"),
+            ("[+/-]", "WPM"),
+            ("[↑/←]", "Prev"),
             ("[↓/→]", "Next"),
             ("[r]", "Restart"),
+            ("[o]", "Open"),
             ("[q]", "Quit"),
         ];
 
         let row = height - 2;
-        let col = width / 2 - (controls.iter().map(|(_, d)| d.len() + 2).sum::<usize>() as u16 / 2);
+        let controls_width: usize = controls
+            .iter()
+            .map(|(k, a)| k.len() + a.len() + 3)
+            .sum::<usize>()
+            - 1;
+        let col = width / 2 - (controls_width as u16 / 2);
 
         execute!(
             io::stdout(),
@@ -161,14 +206,17 @@ impl SpeedReader {
         }
 
         let status_row = row - 1;
+        let reading_time = self.get_reading_time();
         let status_text = format!(
-            "{} | Word {}/{} | WPM: {}{}",
+            "{} | Word {}/{} | WPM: {} | Time: {} | Started: {}{}",
             if self.is_paused { "PAUSED" } else { "PLAYING" },
             self.current_word_index + 1,
             self.words.len(),
             self.wpm,
+            Self::format_duration(reading_time),
+            self.format_start_time(),
             if self.is_paused {
-                " - Press Space to resume"
+                " - Press Space to start"
             } else {
                 ""
             },
@@ -191,11 +239,13 @@ impl SpeedReader {
             return Ok(());
         }
 
-        let mut last_update = std::time::Instant::now();
+        self.render()?;
+
+        let mut last_update = Instant::now();
 
         loop {
             if !self.is_paused {
-                let now = std::time::Instant::now();
+                let now = Instant::now();
                 if now.duration_since(last_update) >= self.get_display_interval() {
                     self.render()?;
                     self.next_word();
@@ -208,28 +258,30 @@ impl SpeedReader {
             }
 
             if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(KeyEvent { code, .. }) = event::read()? {
+                // The event must be shared, or else I miss every other keystroke
+                let ev = event::read()?;
+                if let Event::Key(KeyEvent { code, .. }) = ev {
                     match code {
                         KeyCode::Char('q') | KeyCode::Esc => {
                             return Ok(());
                         }
                         KeyCode::Char(' ') => {
-                            self.is_paused = !self.is_paused;
-                            if !self.is_paused {
-                                last_update = std::time::Instant::now();
+                            if self.is_paused {
+                                self.start_reading();
+                            } else {
+                                self.pause_reading();
                             }
+                            last_update = Instant::now();
                             self.render()?;
                         }
                         KeyCode::Char('r') => {
                             self.restart();
-                            self.is_paused = false;
-                            last_update = std::time::Instant::now();
                             self.render()?;
                         }
                         KeyCode::Right | KeyCode::Down => {
                             if self.next_word() {
                                 self.render()?;
-                                last_update = std::time::Instant::now();
+                                last_update = Instant::now();
                             } else if self.current_word_index >= self.words.len() {
                                 break;
                             }
@@ -237,16 +289,204 @@ impl SpeedReader {
                         KeyCode::Left | KeyCode::Up => {
                             if self.previous_word() {
                                 self.render()?;
-                                last_update = std::time::Instant::now();
+                                last_update = Instant::now();
+                            }
+                        }
+                        KeyCode::Char('+') | KeyCode::Char('=') => {
+                            self.adjust_wpm(50);
+                            self.render()?;
+                        }
+                        KeyCode::Char('-') => {
+                            self.adjust_wpm(-50);
+                            self.render()?;
+                        }
+                        KeyCode::Char('o') => {
+                            if let Some(new_words) = self.open_file_picker()? {
+                                self.words = new_words;
+                                self.restart();
+                                self.render()?;
+                            } else {
+                                self.render()?;
                             }
                         }
                         _ => {}
                     }
                 }
+
+                if let Event::Resize(_, _) = ev {
+                    self.render()?;
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn open_file_picker(&self) -> Result<Option<Vec<String>>> {
+        let mut filter = String::new();
+        let mut files: Vec<String> = Vec::new();
+        let mut selected_index: usize = 0;
+
+        loop {
+            let (width, height) = terminal::size()?;
+            execute!(io::stdout(), Clear(ClearType::All))?;
+
+            if filter.is_empty() {
+                files = self.get_text_files()?;
+            } else {
+                files = self.filter_text_files(&filter)?;
+            }
+
+            if files.is_empty() {
+                execute!(
+                    io::stdout(),
+                    MoveTo(2, 1),
+                    SetForegroundColor(Color::Yellow),
+                    Print("No matching text files found"),
+                    MoveTo(2, 3),
+                    SetForegroundColor(Color::Cyan),
+                    Print("Type to filter files: "),
+                    SetForegroundColor(Color::White),
+                    Print(&filter),
+                    Print("_"),
+                )?;
+            } else {
+                execute!(
+                    io::stdout(),
+                    MoveTo(2, 1),
+                    SetForegroundColor(Color::Yellow),
+                    Print("File Picker - Select a text file to open:"),
+                    MoveTo(2, 3),
+                    SetForegroundColor(Color::Cyan),
+                    Print("Type to filter files: "),
+                    SetForegroundColor(Color::White),
+                    Print(&filter),
+                    Print("_"),
+                )?;
+
+                let max_display = (height - 6) as usize;
+                let start: usize = selected_index.saturating_sub(max_display / 2);
+                let end = std::cmp::min(start + max_display, files.len());
+
+                for (i, file) in files.iter().enumerate().take(end).skip(start) {
+                    let row = 5 + (i - start) as u16;
+                    let filename = file.split('/').last().unwrap_or(file);
+
+                    let display_name = if filename.len() > (width - 10) as usize {
+                        format!("...{}", &filename[filename.len() - (width - 13) as usize..])
+                    } else {
+                        filename.to_string()
+                    };
+
+                    execute!(
+                        io::stdout(),
+                        MoveTo(4, row),
+                        SetForegroundColor(if i == selected_index {
+                            Color::Red
+                        } else {
+                            Color::White
+                        }),
+                        if i == selected_index {
+                            Print("► ")
+                        } else {
+                            Print("  ")
+                        },
+                        Print(display_name),
+                    )?;
+                }
+            }
+
+            io::stdout().flush()?;
+
+            if let Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) = event::read()?
+            {
+                match code {
+                    KeyCode::Esc => return Ok(None),
+                    KeyCode::Enter => {
+                        if let Some(file) = files.get(selected_index) {
+                            let text = read_file(file)?;
+                            if !text.trim().is_empty() {
+                                return Ok(Some(parse_words(&text)));
+                            }
+                        }
+                    }
+                    KeyCode::Up => {
+                        if selected_index > 0 {
+                            selected_index -= 1;
+                        }
+                    }
+                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        if selected_index > 0 {
+                            selected_index -= 1;
+                        }
+                    }
+                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        if selected_index < files.len().saturating_sub(1) {
+                            selected_index += 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        if selected_index < files.len().saturating_sub(1) {
+                            selected_index += 1;
+                        }
+                    }
+                    KeyCode::Char(c) if c.is_ascii() && !c.is_ascii_control() => {
+                        filter.push(c);
+                        selected_index = 0;
+                    }
+                    KeyCode::Backspace => {
+                        filter.pop();
+                        selected_index = 0;
+                    }
+                    _ => {}
+                }
+            }
+
+            // if event::poll(Duration::from_millis(10))? {
+            //     if let Event::Resize(_, _) = event::read()? {}
+            // }
+        }
+    }
+
+    fn get_text_files(&self) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+
+        let walk = WalkBuilder::new(".")
+            .hidden(false)
+            .git_ignore(false)
+            .parents(true)
+            .build();
+
+        for result in walk {
+            if let Ok(entry) = result {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        let ext_lower = ext.to_string_lossy().to_lowercase();
+                        if matches!(ext_lower.as_str(), "txt" | "md" | "rst" | "log" | "text") {
+                            files.push(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        files.sort();
+        Ok(files)
+    }
+
+    fn filter_text_files(&self, filter: &str) -> Result<Vec<String>> {
+        let all_files = self.get_text_files()?;
+        let filter_lower = filter.to_lowercase();
+
+        let filtered: Vec<String> = all_files
+            .into_iter()
+            .filter(|path| path.to_lowercase().contains(&filter_lower))
+            .collect();
+
+        Ok(filtered)
     }
 }
 
@@ -267,10 +507,10 @@ fn parse_words(text: &str) -> Vec<String> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let text = if args.text.is_some() {
-        args.text.unwrap()
-    } else if args.file.is_some() {
-        read_file(&args.file.unwrap())?
+    let text = if let Some(text) = args.text {
+        text
+    } else if let Some(file) = args.file {
+        read_file(&file)?
     } else {
         read_stdin()?
     };
