@@ -501,7 +501,10 @@ fn read_file(path: &str) -> Result<String> {
 }
 
 fn parse_words(text: &str) -> Vec<String> {
-    text.split_whitespace().map(|s| s.to_string()).collect()
+    text.split_whitespace()
+        .filter(|s| s.contains(char::is_alphanumeric))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn main() -> Result<()> {
