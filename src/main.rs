@@ -2,12 +2,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent},
     execute,
     style::{Color, Print, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ignore::WalkBuilder;
 use std::io::{self, Read, Write};
 use std::process;
 use std::time::{Duration, Instant};
@@ -30,6 +29,7 @@ struct SpeedReader {
     current_word_index: usize,
     wpm: u32,
     is_paused: bool,
+    hide_bar: bool,
 }
 
 pub struct FormatDuration(Duration);
@@ -50,6 +50,7 @@ impl SpeedReader {
             current_word_index: 0,
             wpm,
             is_paused: true,
+            hide_bar: false,
         }
     }
 
@@ -134,10 +135,10 @@ impl SpeedReader {
         let controls = [
             ("[Space]", "Play/Pause"),
             ("[+/-]", "WPM"),
-            ("[↑/←]", "Prev"),
-            ("[↓/→]", "Next"),
+            ("[h/←]", "Prev"),
+            ("[l/→]", "Next"),
             ("[r]", "Restart"),
-            ("[o]", "Open"),
+            ("[z]", "Zen"),
             ("[q]", "Quit"),
         ];
 
@@ -240,7 +241,7 @@ impl SpeedReader {
                             self.restart();
                             self.render()?;
                         }
-                        KeyCode::Char('l') | KeyCode::Right | KeyCode::Down => {
+                        KeyCode::Char('l') | KeyCode::Right => {
                             if self.next_word() {
                                 self.render()?;
                                 last_update = Instant::now();
@@ -248,11 +249,14 @@ impl SpeedReader {
                                 break;
                             }
                         }
-                        KeyCode::Char('h') | KeyCode::Left | KeyCode::Up => {
+                        KeyCode::Char('h') | KeyCode::Left => {
                             if self.previous_word() {
                                 self.render()?;
                                 last_update = Instant::now();
                             }
+                        }
+                        KeyCode::Char('z') => {
+                            self.hide_bar = !self.hide_bar;
                         }
                         KeyCode::Char('+') | KeyCode::Char('=') => {
                             self.adjust_wpm(50);
@@ -263,15 +267,6 @@ impl SpeedReader {
                             self.adjust_wpm(-50);
                             display_interval = self.get_display_interval();
                             self.render()?;
-                        }
-                        KeyCode::Char('o') => {
-                            if let Some(new_words) = self.open_file_picker()? {
-                                self.words = new_words;
-                                self.restart();
-                                self.render()?;
-                            } else {
-                                self.render()?;
-                            }
                         }
                         _ => {}
                     }
@@ -284,173 +279,6 @@ impl SpeedReader {
         }
 
         Ok(())
-    }
-
-    fn open_file_picker(&self) -> Result<Option<Vec<String>>> {
-        let mut filter = String::new();
-        let mut files: Vec<String> = Vec::new();
-        let mut selected_index: usize = 0;
-
-        loop {
-            let (width, height) = terminal::size()?;
-            execute!(io::stdout(), Clear(ClearType::All))?;
-
-            if filter.is_empty() {
-                files = self.get_text_files()?;
-            } else {
-                files = self.filter_text_files(&filter)?;
-            }
-
-            if files.is_empty() {
-                execute!(
-                    io::stdout(),
-                    MoveTo(2, 1),
-                    SetForegroundColor(Color::Yellow),
-                    Print("No matching text files found"),
-                    MoveTo(2, 3),
-                    SetForegroundColor(Color::Cyan),
-                    Print("Type to filter files: "),
-                    SetForegroundColor(Color::White),
-                    Print(&filter),
-                    Print("_"),
-                )?;
-            } else {
-                execute!(
-                    io::stdout(),
-                    MoveTo(2, 1),
-                    SetForegroundColor(Color::Yellow),
-                    Print("File Picker - Select a text file to open:"),
-                    MoveTo(2, 3),
-                    SetForegroundColor(Color::Cyan),
-                    Print("Type to filter files: "),
-                    SetForegroundColor(Color::White),
-                    Print(&filter),
-                    Print("_"),
-                )?;
-
-                let max_display = (height - 6) as usize;
-                let start: usize = selected_index.saturating_sub(max_display / 2);
-                let end = std::cmp::min(start + max_display, files.len());
-
-                for (i, file) in files.iter().enumerate().take(end).skip(start) {
-                    let row = 5 + (i - start) as u16;
-                    let filename = file.split('/').last().unwrap_or(file);
-
-                    let display_name = if filename.len() > (width - 10) as usize {
-                        format!("...{}", &filename[filename.len() - (width - 13) as usize..])
-                    } else {
-                        filename.to_string()
-                    };
-
-                    execute!(
-                        io::stdout(),
-                        MoveTo(4, row),
-                        SetForegroundColor(if i == selected_index {
-                            Color::Red
-                        } else {
-                            Color::White
-                        }),
-                        if i == selected_index {
-                            Print("► ")
-                        } else {
-                            Print("  ")
-                        },
-                        Print(display_name),
-                    )?;
-                }
-            }
-
-            io::stdout().flush()?;
-
-            if let Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) = event::read()?
-            {
-                match code {
-                    KeyCode::Esc => return Ok(None),
-                    KeyCode::Enter => {
-                        if let Some(file) = files.get(selected_index) {
-                            let text = read_file(file)?;
-                            if !text.trim().is_empty() {
-                                return Ok(Some(parse_words(&text)));
-                            }
-                        }
-                    }
-                    KeyCode::Up => {
-                        if selected_index > 0 {
-                            selected_index -= 1;
-                        }
-                    }
-                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        if selected_index > 0 {
-                            selected_index -= 1;
-                        }
-                    }
-                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        if selected_index < files.len().saturating_sub(1) {
-                            selected_index += 1;
-                        }
-                    }
-                    KeyCode::Down => {
-                        if selected_index < files.len().saturating_sub(1) {
-                            selected_index += 1;
-                        }
-                    }
-                    KeyCode::Char(c) if c.is_ascii() && !c.is_ascii_control() => {
-                        filter.push(c);
-                        selected_index = 0;
-                    }
-                    KeyCode::Backspace => {
-                        filter.pop();
-                        selected_index = 0;
-                    }
-                    _ => {}
-                }
-            }
-
-            // if event::poll(Duration::from_millis(10))? {
-            //     if let Event::Resize(_, _) = event::read()? {}
-            // }
-        }
-    }
-
-    fn get_text_files(&self) -> Result<Vec<String>> {
-        let mut files = Vec::new();
-
-        let walk = WalkBuilder::new(".")
-            .hidden(false)
-            .git_ignore(false)
-            .parents(true)
-            .build();
-
-        for result in walk {
-            if let Ok(entry) = result {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        let ext_lower = ext.to_string_lossy().to_lowercase();
-                        if matches!(ext_lower.as_str(), "txt" | "md" | "rst" | "log" | "text") {
-                            files.push(path.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        files.sort();
-        Ok(files)
-    }
-
-    fn filter_text_files(&self, filter: &str) -> Result<Vec<String>> {
-        let all_files = self.get_text_files()?;
-        let filter_lower = filter.to_lowercase();
-
-        let filtered: Vec<String> = all_files
-            .into_iter()
-            .filter(|path| path.to_lowercase().contains(&filter_lower))
-            .collect();
-
-        Ok(filtered)
     }
 }
 
