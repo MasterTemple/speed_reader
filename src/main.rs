@@ -133,16 +133,16 @@ impl SpeedReader {
         }
 
         if !self.hide_bar {
-            self.render_controls(width, height)?;
+            self.render_controls(width, height, self.is_paused)?;
         }
 
         io::stdout().flush()?;
         Ok(())
     }
 
-    fn render_controls(&self, width: u16, height: u16) -> Result<()> {
+    fn render_controls(&self, width: u16, height: u16, is_paused: bool) -> Result<()> {
         let controls = [
-            ("[Space]", "Play/Pause"),
+            ("[Space]", if is_paused { "Play" } else { "Pause" }),
             ("[+/-]", "WPM"),
             ("[h/←]", "Prev"),
             ("[l/→]", "Next"),
