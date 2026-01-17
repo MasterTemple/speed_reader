@@ -18,7 +18,7 @@ _You need to adjust your terminal zoom to increase font size_
 - Adjustable WPM
 - Red middle character (allegedly helps with focus)
 - Ignores non-words (only comprised of non-alphanumeric characters)
-- Display percent complete
+- Display completion
 - Calculate time remaining based on WPM
 
 ## Controls
@@ -37,11 +37,12 @@ _You need to adjust your terminal zoom to increase font size_
 Usage: speed_reader [OPTIONS]
 
 Options:
-  -w, --wpm <WPM>    [default: 500]
-  -t, --text <TEXT>
-  -f, --file <FILE>
-  -h, --help         Print help
-  -V, --version      Print version
+  -w, --wpm <WPM>      WPM [default: 500]
+  -i, --index <INDEX>  Word Index [default: 0]
+  -t, --text <TEXT>    Text Input
+  -f, --file <FILE>    File Input
+  -h, --help           Print help
+  -V, --version        Print version
 ```
 
 ## Suggestions

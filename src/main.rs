@@ -14,12 +14,19 @@ use std::time::{Duration, Instant};
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
+    /// WPM
     #[arg(short, long, default_value_t = 500)]
     wpm: u32,
 
+    /// Word Index
+    #[arg(short, long, default_value_t = 0)]
+    index: usize,
+
+    /// Text Input
     #[arg(short, long)]
     text: Option<String>,
 
+    /// File Input
     #[arg(short, long, name = "FILE")]
     file: Option<String>,
 }
@@ -44,10 +51,10 @@ impl std::fmt::Display for FormatDuration {
 }
 
 impl SpeedReader {
-    fn new(words: Vec<String>, wpm: u32) -> Self {
+    fn new(words: Vec<String>, wpm: u32, index: usize) -> Self {
         Self {
             words,
-            current_word_index: 0,
+            current_word_index: index,
             wpm,
             is_paused: true,
             hide_bar: false,
@@ -174,12 +181,12 @@ impl SpeedReader {
         let status_row = row - 1;
 
         let status_text = format!(
-            "{} | Word {}/{} | WPM: {} | Percent: {:.0}% | Remaining: {}",
-            if self.is_paused { "PAUSED" } else { "PLAYING" },
+            "{} | Word {}/{} ({:.0}%) | WPM: {} | Remaining: {}",
+            if self.is_paused { "▶" } else { "⏸" },
             self.current_word_index + 1,
             self.words.len(),
-            self.wpm,
             ((self.current_word_index as f64 + 1.0) / self.words.len() as f64) * 100.0,
+            self.wpm,
             FormatDuration(Duration::from_secs_f64(
                 (self.words.len() - self.current_word_index) as f64 / (self.wpm as f64 / 60.0)
             ))
@@ -323,7 +330,7 @@ fn main() -> Result<()> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, Hide)?;
 
-    let mut reader = SpeedReader::new(words, args.wpm);
+    let mut reader = SpeedReader::new(words, args.wpm, args.index);
 
     let result = reader.run();
 
