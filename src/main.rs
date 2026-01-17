@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     style::{Color, Print, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
@@ -10,7 +10,7 @@ use crossterm::{
 use ignore::WalkBuilder;
 use std::io::{self, Read, Write};
 use std::process;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -30,8 +30,17 @@ struct SpeedReader {
     current_word_index: usize,
     wpm: u32,
     is_paused: bool,
-    start_time: Option<Instant>,
-    total_reading_time: Duration,
+}
+
+pub struct FormatDuration(Duration);
+impl std::fmt::Display for FormatDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let total_seconds = self.0.as_secs();
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        let millis = self.0.subsec_millis();
+        write!(f, "{:02}:{:02}.{:03}", minutes, seconds, millis)
+    }
 }
 
 impl SpeedReader {
@@ -41,8 +50,6 @@ impl SpeedReader {
             current_word_index: 0,
             wpm,
             is_paused: true,
-            start_time: None,
-            total_reading_time: Duration::ZERO,
         }
     }
 
@@ -71,8 +78,6 @@ impl SpeedReader {
     fn restart(&mut self) {
         self.current_word_index = 0;
         self.is_paused = true;
-        self.start_time = None;
-        self.total_reading_time = Duration::ZERO;
     }
 
     fn adjust_wpm(&mut self, delta: i32) {
@@ -88,51 +93,10 @@ impl SpeedReader {
 
     fn start_reading(&mut self) {
         self.is_paused = false;
-        self.start_time = Some(Instant::now());
     }
 
     fn pause_reading(&mut self) {
         self.is_paused = true;
-        if let Some(start) = self.start_time.take() {
-            self.total_reading_time += start.elapsed();
-        }
-    }
-
-    fn get_reading_time(&self) -> Duration {
-        let mut total = self.total_reading_time;
-        if let Some(start) = self.start_time {
-            total += start.elapsed();
-        }
-        total
-    }
-
-    fn format_remaining(&self) -> String {
-        format!("{}%", (self.current_word_index / self.words.len()) as i32)
-    }
-    fn format_duration(duration: Duration) -> String {
-        let total_seconds = duration.as_secs();
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
-        let millis = duration.subsec_millis();
-        format!("{:02}:{:02}.{:03}", minutes, seconds, millis)
-    }
-
-    fn format_start_time(&self) -> String {
-        if let Some(start) = self.start_time {
-            let elapsed = start.elapsed();
-            let now = SystemTime::now()
-                .checked_sub(elapsed)
-                .unwrap_or(SystemTime::now());
-
-            if let Ok(duration) = now.duration_since(SystemTime::UNIX_EPOCH) {
-                let secs = duration.as_secs();
-                let hours = (secs % 86400) / 3600;
-                let minutes = (secs % 3600) / 60;
-                let seconds = secs % 60;
-                return format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
-            }
-        }
-        "Not started".to_string()
     }
 
     fn render(&self) -> Result<()> {
@@ -205,7 +169,6 @@ impl SpeedReader {
         }
 
         let status_row = row - 1;
-        let reading_time = self.get_reading_time();
 
         let status_text = format!(
             "{} | Word {}/{} | WPM: {} | Percent: {:.0}% | Remaining: {}",
@@ -214,7 +177,7 @@ impl SpeedReader {
             self.words.len(),
             self.wpm,
             ((self.current_word_index as f64 + 1.0) / self.words.len() as f64) * 100.0,
-            Self::format_duration(Duration::from_secs_f64(
+            FormatDuration(Duration::from_secs_f64(
                 (self.words.len() - self.current_word_index) as f64 / (self.wpm as f64 / 60.0)
             ))
         );
