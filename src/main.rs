@@ -125,7 +125,9 @@ impl SpeedReader {
             )?;
         }
 
-        self.render_controls(width, height)?;
+        if !self.hide_bar {
+            self.render_controls(width, height)?;
+        }
 
         io::stdout().flush()?;
         Ok(())
@@ -257,6 +259,7 @@ impl SpeedReader {
                         }
                         KeyCode::Char('z') => {
                             self.hide_bar = !self.hide_bar;
+                            self.render()?;
                         }
                         KeyCode::Char('+') | KeyCode::Char('=') => {
                             self.adjust_wpm(50);
