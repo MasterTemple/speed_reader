@@ -1,11 +1,25 @@
 # Speed Reader
 
+## Screenshots
+
+### Simple
+
+![](./assets/status.png)
+
+### Zen
+
+_You need to adjust your terminal zoom to increase font size_
+
+![](./assets/zen.png)
+
 ## Features
 
 - Input via: file, parameter, or stdin
 - Adjustable WPM
 - Red middle character (allegedly helps with focus)
 - Ignores non-words (only comprised of non-alphanumeric characters)
+- Display percent complete
+- Calculate time remaining based on WPM
 
 ## Controls
 
@@ -24,8 +38,8 @@ Usage: speed_reader [OPTIONS]
 
 Options:
   -w, --wpm <WPM>    [default: 500]
-  -t, --text <TEXT>  
-  -f, --file <FILE>  
+  -t, --text <TEXT>
+  -f, --file <FILE>
   -h, --help         Print help
   -V, --version      Print version
 ```
